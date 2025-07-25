@@ -479,61 +479,66 @@ async function syncDB() {
 }
 
 exports.syncDatabases = async (req, res) => {
-  
-    try {
-      const responses = await syncDB();
+  try {
+    const responses = await syncDB();
 
-      if (responses.responses[0]?.returnStatus === "Success") {
-        addLog("SUCCESS", "Database sync completed successfully");
+    if (responses.responses[0]?.returnStatus === "Success") {
+      addLog("SUCCESS", "Database sync completed successfully");
 
-        const updateTableResult = await updateTables();
-        if (updateTableResult.status === "SUCCESS") {
-          addLog("SUCCESS", "Tables updated successfully", updateTableResult);
-        } else {
-          addLog("ERROR", "Error updating tables", updateTableResult);
-        }
+      const updateTableResult = await updateTables();
+      if (updateTableResult.status === "SUCCESS") {
+        addLog("SUCCESS", "Tables updated successfully", updateTableResult);
       } else {
-        addLog("WARN", "Database sync had some issues", {
-          responses: responses.responses,
-          errors: responses.errors,
-        });
+        addLog("ERROR", "Error updating tables", updateTableResult);
       }
-    } catch (error) {
-      addLog("ERROR", "Database sync failed", { error: error.message });
+    } else {
+      addLog("WARN", "Database sync had some issues", {
+        responses: responses.responses,
+        errors: responses.errors,
+      });
     }
+  } catch (error) {
+    addLog("ERROR", "Database sync failed", { error: error.message });
+  }
 
-      const lastSuccessErrorLog = [...logs]
-  .reverse()
-  .find((log) => log.status === "ERROR" || log.status === "SUCCESS");
+  const lastSuccessErrorLog = [...logs]
+    .reverse()
+    .find((log) => log.status === "ERROR" || log.status === "SUCCESS");
 
-let status = "";
-let message = "";
-let context = {};
+  let status = "";
+  let message = "";
+  let context = {};
 
-if (lastSuccessErrorLog) {
-  status = lastSuccessErrorLog.status;
-  message = lastSuccessErrorLog.message;
-  context = lastSuccessErrorLog.context;
-} 
-else {
-  const lastWarnInfoLog = [...logs]
-  .reverse()
-  .find((log) => log.status === "WARN" || log.status === "INFO");
-  
-  status = lastWarnInfoLog ? lastWarnInfoLog.status : "INFO";
-  message = lastWarnInfoLog ? lastWarnInfoLog.message : "No logs found";
-  context = lastWarnInfoLog ? lastWarnInfoLog.context : {};
-}
-      const insertRequest = new mssql.Request();
-      insertRequest.input("status", mssql.NChar(10), status);
-      insertRequest.input("message", mssql.NChar(500), message);
-      insertRequest.input("context", mssql.NChar(1000),  JSON.stringify(context));
+  if (lastSuccessErrorLog) {
+    status = lastSuccessErrorLog.status;
+    message = lastSuccessErrorLog.message;
+    context = lastSuccessErrorLog.context;
+  } else {
+    const lastWarnInfoLog = [...logs]
+      .reverse()
+      .find((log) => log.status === "WARN" || log.status === "INFO");
 
-      await insertRequest.query(`
-        INSERT INTO tb_SYNC_LOG 
-        (STATUS, MESSAGE, CONTEXT)
-        VALUES (@status , @message, @context)
-      `);
+    status = lastWarnInfoLog ? lastWarnInfoLog.status : "INFO";
+    message = lastWarnInfoLog ? lastWarnInfoLog.message : "No logs found";
+    context = lastWarnInfoLog ? lastWarnInfoLog.context : {};
+  }
 
-      await mssql.close();
+  const insertRequest = new mssql.Request();
+  insertRequest.input("status", mssql.NVarChar(10), status);
+  insertRequest.input("message", mssql.NVarChar(500), message);
+  insertRequest.input("context", mssql.NVarChar(mssql.MAX), JSON.stringify(context));
+
+  await insertRequest.query(`
+    INSERT INTO tb_SYNC_LOG (STATUS, MESSAGE, CONTEXT)
+    VALUES (@status, @message, @context)
+  `);
+
+  await mssql.close();
+
+  if (res) res.status(200).json({ status, message, context });
 };
+
+// Default export for Vercel API route
+export default async function handler(req, res) {
+  await exports.syncDatabases(req, res);
+}
